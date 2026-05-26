@@ -1,7 +1,13 @@
 #!/bin/bash
+# 技术日报 — 生成 + 构建 + 部署
 set -e
 
-echo "Building..."
+cd "$(dirname "$0")"
+
+echo "[1/3] 生成今日日报..."
+PYTHONIOENCODING=utf-8 python scripts/gen_daily.py || true
+
+echo "[2/3] 构建站点..."
 npm run build
 
 echo "Deploying to GitHub Pages..."
