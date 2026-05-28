@@ -25,7 +25,9 @@ jobs:
       - name: Check for changes
         id: changes
         run: |
-          git diff --quiet src/content/posts/ || echo "changed=true" >> $GITHUB_OUTPUT
+          if [ -n "$(git status --porcelain src/content/posts/)" ]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
 
       - name: Commit and push
         if: steps.changes.outputs.changed == 'true'
