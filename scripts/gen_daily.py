@@ -217,6 +217,7 @@ def generate_markdown(date_str: str, repos: list[dict], hn: list[dict]) -> str:
 # ─── 主流程 ─────────────────────────────────────────────────────
 
 def main():
+    import sys
     today = datetime.now().strftime("%Y-%m-%d")
     filepath = CONTENT_DIR / f"daily-tech-{today}.md"
 
@@ -234,9 +235,18 @@ def main():
     hn = get_hn_top(6)
     print(f"        获取 {len(hn)} 条新闻")
 
+    if not repos and not hn:
+        print("错误: GitHub 和 HN 数据均获取失败，无法生成日报")
+        sys.exit(1)
+
     md = generate_markdown(today, repos, hn)
     filepath.write_text(md, encoding="utf-8")
-    print(f"\n已生成: {filepath}")
+
+    if not filepath.exists() or filepath.stat().st_size < 100:
+        print("错误: 文件生成失败或内容过短")
+        sys.exit(1)
+
+    print(f"\n已生成: {filepath} ({filepath.stat().st_size} bytes)")
 
 
 if __name__ == "__main__":
