@@ -2,7 +2,7 @@
 """自动生成技术日报 — 抓取 GitHub Trending + Hacker News"""
 
 import json
-import re
+import sys
 import urllib.request
 import urllib.error
 from datetime import datetime, timedelta
@@ -11,6 +11,20 @@ from pathlib import Path
 CONTENT_DIR = Path(__file__).parent.parent / "src" / "content" / "posts"
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (tech-daily-bot/1.0)"}
+
+# ─── 配置常量 ─────────────────────────────────────────────────
+
+MIN_STARS_NEW = 50          # 新项目最低星数
+MIN_STARS_POPULAR = 1000    # 热门项目最低星数
+MIN_SCORE_HN = 50           # HN 最低分数
+MAX_REPOS_PRIMARY = 10      # 主查询最大项目数
+MAX_REPOS_FALLBACK = 8      # 补充查询最大项目数
+MAX_REPOS_OUTPUT = 8        # 最终输出最大项目数
+MAX_REPOS_SECTION = 6       # 每个板块最大项目数
+MAX_HN_STORIES = 20         # HN 取前 N 条
+MAX_HN_COUNT = 6            # HN 最终输出数
+FALLBACK_DAYS = 7           # 补充查询回溯天数
+NEW_PROJECT_DAYS = 3        # 新项目查询回溯天数
 
 
 def fetch_json(url: str, timeout: int = 15) -> dict | list:
@@ -31,17 +45,17 @@ def get_github_trending() -> list[dict]:
     """通过 GitHub API 获取近期高星项目"""
     repos = []
 
-    # 查询近 3 天创建的高星项目
-    since = (datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d")
+    # 查询近 N 天创建的高星项目
+    since = (datetime.now() - timedelta(days=NEW_PROJECT_DAYS)).strftime("%Y-%m-%d")
     url = (
         f"https://api.github.com/search/repositories"
-        f"?q=created:>{since}+stars:>50&sort=stars&order=desc&per_page=15"
+        f"?q=created:>{since}+stars:>{MIN_STARS_NEW}"
+        f"&sort=stars&order=desc&per_page={MAX_REPOS_PRIMARY}"
     )
     try:
         data = fetch_json(url)
-        for r in data.get("items", [])[:10]:
+        for r in data.get("items", [])[:MAX_REPOS_PRIMARY]:
             desc = (r.get("description") or "")[:150]
-            # 过滤 spam 项目
             if _is_spam(desc):
                 continue
             repos.append({
@@ -56,14 +70,16 @@ def get_github_trending() -> list[dict]:
 
     # 如果结果太少，补充高星活跃项目
     if len(repos) < 5:
+        since_fallback = (datetime.now() - timedelta(days=FALLBACK_DAYS)).strftime("%Y-%m-%d")
         url2 = (
-            "https://api.github.com/search/repositories"
-            "?q=stars:>1000+pushed:>2026-05-20&sort=stars&order=desc&per_page=8"
+            f"https://api.github.com/search/repositories"
+            f"?q=stars:>{MIN_STARS_POPULAR}+pushed:>{since_fallback}"
+            f"&sort=stars&order=desc&per_page={MAX_REPOS_FALLBACK}"
         )
         try:
             data2 = fetch_json(url2)
             existing = {r["name"] for r in repos}
-            for r in data2.get("items", [])[:8]:
+            for r in data2.get("items", [])[:MAX_REPOS_FALLBACK]:
                 if r["full_name"] in existing:
                     continue
                 repos.append({
@@ -76,14 +92,13 @@ def get_github_trending() -> list[dict]:
         except Exception as e:
             print(f"  GitHub 补充查询错误: {e}")
 
-    return repos[:8]
+    return repos[:MAX_REPOS_OUTPUT]
 
 
 def _is_spam(desc: str) -> bool:
     """检测 spam 项目描述"""
     lower = desc.lower()
     spam_signals = ["trading bot", "copy trading", "arbitrage bot"]
-    # 重复词超过 3 次视为 spam
     words = lower.split()
     if len(words) > 10:
         from collections import Counter
@@ -95,13 +110,13 @@ def _is_spam(desc: str) -> bool:
 
 # ─── Hacker News ─────────────────────────────────────────────────
 
-def get_hn_top(count: int = 6) -> list[dict]:
+def get_hn_top(count: int = MAX_HN_COUNT) -> list[dict]:
     """获取 HN 热门故事"""
     stories = []
     try:
         ids = fetch_json(
             "https://hacker-news.firebaseio.com/v0/topstories.json", timeout=10
-        )[:20]
+        )[:MAX_HN_STORIES]
 
         for sid in ids:
             if len(stories) >= count:
@@ -114,7 +129,7 @@ def get_hn_top(count: int = 6) -> list[dict]:
                 title = item.get("title", "")
                 url = item.get("url", f"https://news.ycombinator.com/item?id={sid}")
                 score = item.get("score", 0)
-                if score < 50:
+                if score < MIN_SCORE_HN:
                     continue
                 stories.append({
                     "title": title,
@@ -168,7 +183,7 @@ def generate_markdown(date_str: str, repos: list[dict], hn: list[dict]) -> str:
         "",
     ]
 
-    for r in repos[:6]:
+    for r in repos[:MAX_REPOS_SECTION]:
         stars = _stars_label(r["stars"])
         tag = _lang_tag(r["lang"])
         lines.append(f"### [{r['name']}]({r['url']})")
@@ -217,7 +232,6 @@ def generate_markdown(date_str: str, repos: list[dict], hn: list[dict]) -> str:
 # ─── 主流程 ─────────────────────────────────────────────────────
 
 def main():
-    import sys
     today = datetime.now().strftime("%Y-%m-%d")
     filepath = CONTENT_DIR / f"daily-tech-{today}.md"
 
@@ -232,7 +246,7 @@ def main():
     print(f"        获取 {len(repos)} 个项目")
 
     print("  [2/2] 抓取 Hacker News...")
-    hn = get_hn_top(6)
+    hn = get_hn_top()
     print(f"        获取 {len(hn)} 条新闻")
 
     if not repos and not hn:
